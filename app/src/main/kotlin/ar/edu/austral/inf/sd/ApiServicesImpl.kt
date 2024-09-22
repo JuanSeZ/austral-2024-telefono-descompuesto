@@ -117,13 +117,20 @@ class ApiServicesImpl(
 
     private fun sendRelayMessage(body: String, contentType: String, relayNode: RegisterResponse, signatures: Signatures) {
         val url = "http://${relayNode.nextHost}:${relayNode.nextPort}/relay"
-        
-        val headers = HttpHeaders()
-        headers.contentType = MediaType.MULTIPART_FORM_DATA
+        val messageHeaders = HttpHeaders().apply { setContentType(MediaType.parseMediaType(contentType)) }
+        val messagePart = HttpEntity(body, messageHeaders)
 
-        val bodyMap: MultiValueMap<String, Any> = LinkedMultiValueMap()
-        bodyMap.add("message", body)
-        bodyMap.add("signatures", signatures)
+        val signatureHeaders = HttpHeaders().apply { setContentType(MediaType.APPLICATION_JSON) }
+        val signaturesPart = HttpEntity(signatures, signatureHeaders)
+
+        val bodyMap = LinkedMultiValueMap<String, Any>().apply {
+            add("message", messagePart)
+            add("signatures", signaturesPart)
+        }
+
+        val headers = HttpHeaders().apply {
+            setContentType(MediaType.MULTIPART_FORM_DATA)
+        }
 
         val requestEntity = HttpEntity(bodyMap, headers)
 
