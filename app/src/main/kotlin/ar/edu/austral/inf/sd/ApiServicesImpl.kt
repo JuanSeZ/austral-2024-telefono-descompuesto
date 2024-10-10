@@ -6,14 +6,13 @@ import ar.edu.austral.inf.sd.server.api.RelayApiService
 import ar.edu.austral.inf.sd.server.api.BadRequestException
 import ar.edu.austral.inf.sd.server.api.ReconfigureApiService
 import ar.edu.austral.inf.sd.server.api.UnregisterNodeApiService
-import ar.edu.austral.inf.sd.server.model.PlayResponse
-import ar.edu.austral.inf.sd.server.model.RegisterResponse
-import ar.edu.austral.inf.sd.server.model.Signature
-import ar.edu.austral.inf.sd.server.model.Signatures
+import ar.edu.austral.inf.sd.server.model.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.update
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.stereotype.Component
 import org.springframework.web.context.request.RequestContextHolder
 import org.springframework.web.context.request.ServletRequestAttributes
@@ -28,10 +27,11 @@ class ApiServicesImpl : RegisterNodeApiService, RelayApiService, PlayApiService,
 
     @Value("\${server.name:nada}")
     private val myServerName: String = ""
-
+//    TODO: receive timeout through config
+    private val timeout = 1
     @Value("\${server.port:8080}")
     private val myServerPort: Int = 0
-    private val nodes: MutableList<RegisterResponse> = mutableListOf()
+    private val nodes: MutableList<Node> = mutableListOf()
     private var nextNode: RegisterResponse? = null
     private val messageDigest = MessageDigest.getInstance("SHA-512")
     private val salt = Base64.getEncoder().encodeToString(Random.nextBytes(9))
@@ -42,20 +42,28 @@ class ApiServicesImpl : RegisterNodeApiService, RelayApiService, PlayApiService,
     private var currentMessageResponse = MutableStateFlow<PlayResponse?>(null)
     private var xGameTimestamp: Int = 0
 
-    override fun registerNode(host: String?, port: Int?, uuid: UUID?, salt: String?, name: String?): RegisterResponse {
+    override fun registerNode(host: String?, port: Int?, uuid: UUID?, salt: String?, name: String?): ResponseEntity<RegisterResponse> {
+        if (host.isNullOrEmpty() || port == null || uuid == null || salt.isNullOrEmpty() || name.isNullOrEmpty()) {
+            throw BadRequestException("Invalid input parameters")
+        }
+
+        val existingNode = nodes.find { it.uuid == uuid && it.salt == salt }
+        if (existingNode != null) {
+            return ResponseEntity(RegisterResponse(existingNode.nextHost,existingNode.nextPort,existingNode.timeout,existingNode.xGameTimestamp), HttpStatus.ACCEPTED)
+        }
 
         val nextNode = if (nodes.isEmpty()) {
-            // es el primer nodo
-            val me = RegisterResponse(currentRequest.serverName, myServerPort, "", "")
-            nodes.add(me)
-            me
+            val firstNode = Node(currentRequest.serverName, myServerPort, timeout, +xGameTimestamp, this.salt, UUID.randomUUID())
+            nodes.add(firstNode)
+            firstNode
         } else {
             nodes.last()
         }
-        val node = RegisterResponse(host!!, port!!, uuid, salt)
+        val node = Node(host, port,timeout,+xGameTimestamp,salt,uuid)
         nodes.add(node)
 
-        return RegisterResponse(nextNode.nextHost, nextNode.nextPort, uuid, newSalt())
+        val response = RegisterResponse(nextNode.nextHost, nextNode.nextPort, timeout, xGameTimestamp)
+        return ResponseEntity(response, HttpStatus.CREATED)
     }
 
     override fun relayMessage(message: String, signatures: Signatures, xGameTimestamp: Int?): Signature {
